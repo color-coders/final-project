@@ -1,72 +1,161 @@
 import pickle
-import numpy as np
+import random
+import re
+from PIL import Image
 import tensorflow as tf
-import os
+import numpy as np
+import collections
+from tqdm import tqdm
 
-def unpickle(file):
-	"""
-	CIFAR data contains the files data_batch_1, data_batch_2, ..., 
-	as well as test_batch. We have combined all train batches into one
-	batch for you. Each of these files is a Python "pickled" 
-	object produced with cPickle. The code below will open up a 
-	"pickled" object (each file) and return a dictionary.
+def preprocess_captions(captions, window_size):
+    for i, caption in enumerate(captions):
+        # Taken from:
+        # https://towardsdatascience.com/image-captions-with-attention-in-tensorflow-step-by-step-927dad3569fa
 
-	NOTE: DO NOT EDIT
+        # Convert the caption to lowercase, and then remove all special characters from it
+        caption_nopunct = re.sub(r"[^a-zA-Z0-9]+", ' ', caption.lower())
+      
+        # Split the caption into separate words, and collect all words which are more than 
+        # one character and which contain only alphabets (ie. discard words with mixed alpha-numerics)
+        clean_words = [word for word in caption_nopunct.split() if ((len(word) > 1) and (word.isalpha()))]
+      
+        # Join those words into a string
+        caption_new = ['<start>'] + clean_words[:window_size-1] + ['<end>']
+      
+        # Replace the old caption in the captions list with this new cleaned caption
+        captions[i] = caption_new
 
-	:param file: the file to unpickle
-	:return: dictionary of unpickled data
-	"""
-	with open(file, 'rb') as fo:
-		dict = pickle.load(fo, encoding='bytes')
-	return dict
+def get_image_features(image_names, data_folder, vis_subset=100):
+    '''
+    Method used to extract the features from the images in the dataset using ResNet50
+    '''
+    image_features = []
+    vis_images = []
+    resnet = tf.keras.applications.ResNet50(False)  ## Produces Bx7x7x2048
+    gap = tf.keras.layers.GlobalAveragePooling2D()  ## Produces Bx2048
+    pbar = tqdm(image_names)
+    for i, image_name in enumerate(pbar):
+        img_path = f'{data_folder}/Images/{image_name}'
+        pbar.set_description(f"[({i+1}/{len(image_names)})] Processing '{img_path}' into 2048-D ResNet GAP Vector")
+        with Image.open(img_path) as img:
+            img_array = np.array(img.resize((224,224)))
+        img_in = tf.keras.applications.resnet50.preprocess_input(img_array)[np.newaxis, :]
+        image_features += [gap(resnet(img_in))]
+        if i < vis_subset:
+            vis_images += [img_array]
+    print()
+    return image_features, vis_images
 
 
-def get_data(file_path, first_class, second_class):
-	"""
-	Given a file path and two target classes, returns an array of 
-	normalized inputs (images) and an array of labels. 
-	You will want to first extract only the data that matches the 
-	corresponding classes we want (there are 10 classes and we only want 2).
-	You should make sure to normalize all inputs and also turn the labels
-	into one hot vectors using tf.one_hot().
-	Note that because you are using tf.one_hot() for your labels, your
-	labels will be a Tensor, while your inputs will be a NumPy array. This 
-	is fine because TensorFlow works with NumPy arrays.
-	:param file_path: file path for inputs and labels, something 
-	like 'CIFAR_data_compressed/train'
-	:param first_class:  an integer (0-9) representing the first target
-	class in the CIFAR10 dataset, for a cat, this would be a 3
-	:param first_class:  an integer (0-9) representing the second target
-	class in the CIFAR10 dataset, for a dog, this would be a 5
-	:return: normalized NumPy array of inputs and tensor of labels, where 
-	inputs are of type np.float32 and has size (num_inputs, width, height, num_channels) and labels 
-	has size (num_examples, num_classes)
-	"""
-	unpickled_file = unpickle(file_path)
-	inputs = unpickled_file[b'data']
-	labels = unpickled_file[b'labels']
-	# TODO: Do the rest of preprocessing!
-	# gets the index of the first target class
-	first = np.array(labels)
-	first = first == first_class
-	first = first.nonzero()[0]
+def load_data(data_folder):
+    '''
+    Method that was used to preprocess the data in the data.p file. You do not need 
+    to use this method, nor is this used anywhere in the assignment. This is the method
+    that the TAs used to pre-process the Flickr 8k dataset and create the data.p file 
+    that is in your assignment folder. 
 
-	# gets the index of the second target class
-	second = np.array(labels)
-	second = second == second_class
-	second = second.nonzero()[0]
+    Feel free to ignore this, but please read over this if you want a little more clairity 
+    on how the images and captions were pre-processed 
+    '''
+    text_file_path = f'{data_folder}/captions.txt'
 
-	# concats the first and second arrays, then reshapes
-	t = np.concatenate((first, second))
-	total = inputs[t]
-	total = (total / 255.0).astype(np.float32)
-	total = tf.reshape(total, (-1, 3, 32, 32))
-	total = tf.transpose(total, perm=[0,2,3,1])
-	
-	# relabeling
-	newlabels = np.array(labels)
-	newlabels = newlabels[t]
-	newlabels = np.where(newlabels == first_class, 0, 1)
-	newlabels = tf.one_hot(newlabels, 2)
+    with open(text_file_path) as file:
+        examples = file.read().splitlines()[1:]
+    
+    #map each image name to a list containing all 5 of its captons
+    image_names_to_captions = {}
+    for example in examples:
+        img_name, caption = example.split(',', 1)
+        image_names_to_captions[img_name] = image_names_to_captions.get(img_name, []) + [caption]
 
-	return total, newlabels
+    #randomly split examples into training and testing sets
+    shuffled_images = list(image_names_to_captions.keys())
+    random.seed(0)
+    random.shuffle(shuffled_images)
+    test_image_names = shuffled_images[:1000]
+    train_image_names = shuffled_images[1000:]
+
+    def get_all_captions(image_names):
+        to_return = []
+        for image in image_names:
+            captions = image_names_to_captions[image]
+            for caption in captions:
+                to_return.append(caption)
+        return to_return
+
+
+    # get lists of all the captions in the train and testing set
+    train_captions = get_all_captions(train_image_names)
+    test_captions = get_all_captions(test_image_names)
+
+    #remove special charachters and other nessesary preprocessing
+    window_size = 20
+    preprocess_captions(train_captions, window_size)
+    preprocess_captions(test_captions, window_size)
+
+    # count word frequencies and replace rare words with '<unk>'
+    word_count = collections.Counter()
+    for caption in train_captions:
+        word_count.update(caption)
+
+    def unk_captions(captions, minimum_frequency):
+        for caption in captions:
+            for index, word in enumerate(caption):
+                if word_count[word] <= minimum_frequency:
+                    caption[index] = '<unk>'
+
+    unk_captions(train_captions, 50)
+    unk_captions(test_captions, 50)
+
+    # pad captions so they all have equal length
+    def pad_captions(captions, window_size):
+        for caption in captions:
+            caption += (window_size + 1 - len(caption)) * ['<pad>'] 
+    
+    pad_captions(train_captions, window_size)
+    pad_captions(test_captions,  window_size)
+
+    # assign unique ids to every work left in the vocabulary
+    word2idx = {}
+    vocab_size = 0
+    for caption in train_captions:
+        for index, word in enumerate(caption):
+            if word in word2idx:
+                caption[index] = word2idx[word]
+            else:
+                word2idx[word] = vocab_size
+                caption[index] = vocab_size
+                vocab_size += 1
+    for caption in test_captions:
+        for index, word in enumerate(caption):
+            caption[index] = word2idx[word] 
+    
+    # use ResNet50 to extract image features
+    print("Getting training embeddings")
+    train_image_features, train_images = get_image_features(train_image_names, data_folder)
+    print("Getting testing embeddings")
+    test_image_features,  test_images  = get_image_features(test_image_names, data_folder)
+
+    return dict(
+        train_captions          = np.array(train_captions),
+        test_captions           = np.array(test_captions),
+        train_image_features    = np.array(train_image_features),
+        test_image_features     = np.array(test_image_features),
+        train_images            = np.array(train_images),
+        test_images             = np.array(test_images),
+        word2idx                = word2idx,
+        idx2word                = {v:k for k,v in word2idx.items()},
+    )
+
+
+def create_pickle(data_folder):
+    with open(f'{data_folder}/data.p', 'wb') as pickle_file:
+        pickle.dump(load_data(data_folder), pickle_file)
+    print(f'Data has been dumped into {data_folder}/data.p!')
+
+
+if __name__ == '__main__':
+    ## Download this and put the Images and captions.txt indo your ../data directory
+    ## Flickr 8k Dataset: https://www.kaggle.com/datasets/adityajn105/flickr8k?resource=download
+    data_folder = '../data'
+    create_pickle(data_folder)
