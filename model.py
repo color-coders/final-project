@@ -1,24 +1,19 @@
 from __future__ import absolute_import
 from matplotlib import pyplot as plt
-from preprocess import get_data
-from convolution import conv2d
-from keras.layers import Conv2D, UpSampling2D, InputLayer, Conv2DTranspose
-from keras.layers import Activation, Dense, Dropout, Flatten
-from keras.layers.normalization import BatchNormalization
-from keras.models import Sequential
+from keras.layers import Conv2D, UpSampling2D, InputLayer
 from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img
-from skimage.color import rgb2lab, lab2rgb, rgb2gray, xyz2lab
+from skimage.color import rgb2lab, lab2rgb, rgb2gray
 from skimage.io import imsave
+from keras.models import Sequential
 
-import numpy as np
-import os
-import random
-import tensorflow as tf
-import os
+from preprocess_v2 import process_image
+
 import tensorflow as tf
 import numpy as np
+import os
 import random
 import math
+import pickle
 
 # ensures that we run only on cpu
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -74,11 +69,6 @@ class Model(tf.keras.Model):
         return tf.reduce_mean(tf.cast(correct_predictions, tf.float32))
 
 def train(model, train_inputs, train_labels):
-    index = list(range(len(train_inputs)))
-    np.random.shuffle(index)
-    tf.gather(train_inputs, index)
-    tf.gather(train_labels, index)
-
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
     
     b = model.batch_size
@@ -114,8 +104,16 @@ def test(model, test_inputs, test_labels):
     acc /= batch_num
     return acc
 
+
 def main():
-    X, Y = get_data()
+    with open('data/data.p', 'rb') as data_file:
+        data_dict = pickle.load(data_file)
+    train_images    = data_dict['train_images']
+    train_labels    = data_dict['train_labels']
+    test_images     = data_dict['test_images']
+    test_labels     = data_dict['test_labels']
+
+    X, Y = process_image('data/Images')
     model = Sequential()
     model.add(InputLayer(input_shape=(None, None, 1)))
     model.add(Conv2D(8, (3, 3), activation='relu', padding='same', strides=2))
@@ -136,6 +134,21 @@ def main():
     y=Y,
     batch_size=1,
     epochs=1000)
+
+    print(model.evaluate(X, Y, batch_size=1))
+    image = img_to_array(load_img('data/Images/667626_18933d713e.jpg'))
+    image = np.array(image, dtype=float)
+    X = rgb2lab(1.0/255*image)[:,:,0]
+    X = X.reshape(1, 256, 256, 1)
+
+    output = model.predict(X)
+    output *= 128
+    # Output colorizations
+    cur = np.zeros((256, 256, 3))
+    cur[:,:,0] = X[0][:,:,0]
+    cur[:,:,1:] = output[0]
+    imsave("img_result.png", lab2rgb(cur))
+    imsave("img_gray_version.png", rgb2gray(lab2rgb(cur)))
     return
 
 
