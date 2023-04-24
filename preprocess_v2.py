@@ -8,7 +8,7 @@ import pickle
 import random
 
 import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+# os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 
 def process_images(image_names, data_folder):
@@ -22,16 +22,13 @@ def process_images(image_names, data_folder):
     # Example: [1/1] Processing 'data/Images/10815824_2997e03d76.jpg': 100%
     for i, image_name in enumerate(pbar):
         img = f'{data_folder}/Images/{image_name}'
-
-        # removed pbar description for better performance
-        # pbar.set_description(f"[{i+1}/{len(image_names)}] Processing '{img}'")
         
         # The Image class in the Pillow library is used to open images as an np array. 3 means RGB.
         with Image.open(img) as img: # print("img shape:", np.shape(img)): (333, 500, 3)
             img_array = np.array(img.resize((256,256))) # print("img_array shape", np.shape(img_array)): (256, 256, 3)
             
         # Convert RGB to LAB
-        img_lab_rs = color.rgb2lab(1.0/255*img_array) # Shape: (256, 256, 3) 
+        img_lab_rs = color.rgb2lab(1.0/255*img_array) # Shape: (256, 256, 3)
         
         # Extract Lightness from LAB and convert to tensor 
         img_l_rs = img_lab_rs[:,:,0]
@@ -69,8 +66,9 @@ def load_data(data_folder, batch):
     random.seed(0)
     random.shuffle(shuffled_images)
 
+    # adjust splicing to change batch sizes
     if batch == 'train1':
-        data = shuffled_images[1000:3500]
+        data = shuffled_images[1000:1100]
     elif batch == 'train2':
         data = shuffled_images[3500:6000]
     elif batch == 'train3':
@@ -82,7 +80,6 @@ def load_data(data_folder, batch):
 
     create_pickle(np.array(images), batch)
     create_pickle(np.array(labels), batch + '_labels')
-
 
 def create_pickle(data, file):
     with open(f'data/{file}.p', 'wb') as pickle_file:
