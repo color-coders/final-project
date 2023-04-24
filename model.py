@@ -45,9 +45,9 @@ def main():
     list_ds = list_ds.shuffle(8091, reshuffle_each_iteration=False)
     
     val_size = int(8091 * 0.2)
-    train_ds = list_ds.take(1000)
-    val_ds = list_ds.skip(1000).take(1000)
-    test_ds = list_ds.skip(2000).take(100)
+    train_ds = list_ds.take(5000)
+    val_ds = list_ds.skip(5000).take(2000)
+    test_ds = list_ds.skip(7000).take(1000)
 
 
     def decode_img(img):
