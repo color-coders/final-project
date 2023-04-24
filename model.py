@@ -8,12 +8,16 @@ from keras.models import Sequential
 from keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.utils import array_to_img, img_to_array, load_img
 import tensorflow as tf
+import tensorflow_io as tfio
 import numpy as np
 import random
 import math
 import pickle
 import os
-print(tf.__version__)
+
+from skimage import img_as_ubyte
+
+from PIL import Image
 
 def load_data(file):
     with open(f'data/{file}.p', 'rb') as data_file:
@@ -23,7 +27,6 @@ def load_data(file):
 
 def main():
     model = Sequential()
-    model.add(tf.keras.layers.Rescaling(1./255))
     model.add(Conv2D(8, (3, 3), activation='relu', padding='same', strides=2))
     model.add(Conv2D(8, (3, 3), activation='relu', padding='same'))
     model.add(Conv2D(16, (3, 3), activation='relu', padding='same'))
@@ -42,24 +45,25 @@ def main():
     list_ds = list_ds.shuffle(8091, reshuffle_each_iteration=False)
     
     val_size = int(8091 * 0.2)
-    train_ds = list_ds.take(100)
-    val_ds = list_ds.skip(100).take(100)
-    test_ds = list_ds.skip(200).take(1)
+    train_ds = list_ds.take(1000)
+    val_ds = list_ds.skip(1000).take(1000)
+    test_ds = list_ds.skip(2000).take(100)
 
 
     def decode_img(img):
         # Convert the compressed string to a 3D uint8 tensor
-        img = tf.io.decode_jpeg(img, channels=3)
+        img = tf.io.decode_jpeg(img, fancy_upscaling=False)
+        img = tf.cast(img, tf.float64)
+        img *= 1.0/255
         # Resize the image to the desired size
-        return tf.image.resize(img, [256, 256])
+        return tf.image.resize(img, (256, 256))
     
     def process_path(file_path):
         # Load the raw data from the file as a string
         img = tf.io.read_file(file_path)
         img = decode_img(img)
-        sess = tf.Session()
-        a_np = sess.run(img)
-        img = rgb2lab(a_np)
+
+        img = tfio.experimental.color.rgb_to_lab(img)
         l_image = img[:,:,0]
         l_image = tf.reshape(l_image, (1, 256, 256, 1))
         ab_image = img[:,:,1:]
@@ -83,33 +87,27 @@ def main():
     val_ds = configure_for_performance(val_ds)
     test_ds = configure_for_performance(test_ds)
 
-
     model.fit(train_ds,
     validation_data=val_ds,
     epochs=1)
 
-    print(model.evaluate(test_ds, batch_size=1))
     output = model.predict(test_ds)
     output *= 128
 
     img = []
-
     for images, labels in test_ds.take(1):
         img = images
-    
-    print(img.shape)
-
 
     # Output colorizations
     cur = np.zeros((256, 256, 3))
-    cur[:,:,0] = img[:,:,:,0]
-    cur[:,:,1:] = output[0]
-    imsave("img_result.png", lab2rgb(cur))
-    imsave("img_gray_version.png", rgb2gray(lab2rgb(cur)))
+    cur[:,:,0] = img[0][:,:,0]
+    cur[:,:,1:] = output[0][:,:,:]
+    imsave("img_result.png", img_as_ubyte(tfio.experimental.color.lab_to_rgb(cur)))
+    imsave("img_gray_version.png", img_as_ubyte(tfio.experimental.color.rgb_to_grayscale(tfio.experimental.color.lab_to_rgb(cur))))
+    # imsave("img_result.png", img_as_ubyte(lab2rgb(cur)))
+    # imsave("img_gray_version.png", img_as_ubyte(rgb2gray(lab2rgb(cur))))
+
     return
-
-    
-
 
     images = load_data('train1')
     labels = load_data('train1_labels')
@@ -136,7 +134,7 @@ def main():
 
     # Output colorizations
     cur = np.zeros((256, 256, 3))
-    cur[:,:,0] = images[1][:,:,0]
+    cur[:,:,0] = images[0][:,:,0]
     cur[:,:,1:] = output[0]
     imsave("img_result.png", lab2rgb(cur))
     imsave("img_gray_version.png", rgb2gray(lab2rgb(cur)))
